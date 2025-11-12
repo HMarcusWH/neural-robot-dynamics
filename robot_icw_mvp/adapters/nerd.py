@@ -7,15 +7,21 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import torch
-import yaml
 
+from robot_icw_mvp.constants import (
+    BACKEND_ABSTAIN,
+    BACKEND_ANALYTIC,
+    BACKEND_AUTO,
+    BACKEND_NEURAL,
+    canonicalize_backend,
+)
 from robot_icw_mvp.creativity.planner import CreativityPlanner, CreativityProposal
 from robot_icw_mvp.geometry.cache import LadderGeometryCache, GeometrySnapshot
 from robot_icw_mvp.intuition.zoom_controller import IntuitionController, IntuitionDecision
-from robot_icw_mvp.safety.automaton import SafetyAutomaton
+from robot_icw_mvp.safety.automaton import SafetyAutomaton, SafetyCheckResult
 from robot_icw_mvp.wisdom.memory_lenses import WisdomModule, WisdomSummary
 
-DEFAULT_CFG_PATH = Path(__file__).resolve().parent / "configs" / "default_icw.yaml"
+DEFAULT_CFG_PATH = Path(__file__).resolve().parent.parent / "configs" / "default_icw.yaml"
 
 
 @dataclass
@@ -24,7 +30,7 @@ class ICWDecision:
     action_delta: Optional[torch.Tensor] = None
     dt_scale: float = 1.0
     abstain: bool = False
-    fallback_backend: str = "ground-truth"
+    fallback_backend: str = BACKEND_ANALYTIC
     extras: Dict[str, float] = field(default_factory=dict)
     creativity: CreativityProposal = field(default=None)
     intuition: Optional[IntuitionDecision] = None
@@ -32,9 +38,10 @@ class ICWDecision:
 
     @property
     def backend_to_apply(self) -> str:
-        if self.abstain:
+        backend = canonicalize_backend(self.backend)
+        if backend == BACKEND_ABSTAIN or self.abstain:
             return self.fallback_backend
-        return self.backend
+        return backend
 
 
 class ICWController:
@@ -69,7 +76,7 @@ class ICWController:
         if value is None:
             return 0.0
         if isinstance(value, torch.Tensor):
-            return float(value.item())
+            return float(value.detach().cpu().item())
         return float(value)
 
     @property
@@ -84,8 +91,10 @@ class ICWController:
         if snapshot is None:
             snapshot = self._geometry.observe(self._env.states)
         intuition_decision = self._intuition.decide(snapshot)
+        requested_backend = canonicalize_backend(intuition_decision.backend)
+        precheck_summary = self._wisdom.precheck(snapshot)
         creativity_proposal = self._creativity.propose(
-            snapshot, intuition_decision.backend, actions
+            snapshot, requested_backend, actions
         )
 
         if creativity_proposal.delta_actions is not None:
@@ -93,9 +102,25 @@ class ICWController:
         else:
             candidate_actions = actions
 
-        safe = self._safety.validate(candidate_actions, self._env.control_limits)
-        abstain = intuition_decision.abstain or not safe
-        backend = intuition_decision.backend
+        safety_result: SafetyCheckResult = self._safety.validate(
+            candidate_actions, self._env.control_limits
+        )
+        safe = safety_result.safe
+        candidate_actions = safety_result.clamped_actions
+        backend = requested_backend
+        certificates_passed = precheck_summary.certificates_passed
+
+        if not certificates_passed:
+            creativity_proposal = CreativityProposal(
+                delta_actions=None,
+                metadata=creativity_proposal.metadata,
+                triggered=False,
+            )
+            backend = BACKEND_ANALYTIC
+
+        abstain = backend == BACKEND_ABSTAIN or not safe or not certificates_passed
+        if abstain:
+            backend = BACKEND_ABSTAIN
         safety_report = self._safety.latest_report
         extras = {
             "intuition/rupture": self._as_float(intuition_decision.metrics.get("rupture", 0.0)),
@@ -109,18 +134,27 @@ class ICWController:
             ),
             "intuition/dt_scale": self._as_float(intuition_decision.dt_scale),
         }
+        extras.update({f"wisdom/certificates/{k}": float(v) for k, v in precheck_summary.certificates.items()})
         for key, value in safety_report.items():
             extras[f"safety/{key}"] = self._as_float(value)
+        if not safe:
+            delta_actions = safety_result.clamped_actions - actions
+        else:
+            delta_actions = creativity_proposal.delta_actions
+        dt_scale = intuition_decision.dt_scale
+        if abstain and dt_scale >= 1.0:
+            dt_scale = self._intuition.abstain_dt_scale
         decision = ICWDecision(
             backend=backend,
-            action_delta=creativity_proposal.delta_actions,
-            dt_scale=intuition_decision.dt_scale,
+            action_delta=delta_actions,
+            dt_scale=dt_scale if abstain else 1.0,
             abstain=abstain,
-            fallback_backend="ground-truth",
+            fallback_backend=BACKEND_ANALYTIC,
             extras=extras,
             creativity=creativity_proposal,
             intuition=intuition_decision,
         )
+        decision.wisdom = precheck_summary
         self._latest_decision = decision
         self._latest_snapshot = snapshot
         return decision
@@ -137,6 +171,8 @@ class ICWController:
             self._latest_decision.extras["wisdom/certificates"] = (
                 1.0 if wisdom_summary.certificates_passed else 0.0
             )
+            for name, passed in wisdom_summary.certificates.items():
+                self._latest_decision.extras[f"wisdom/certificates/{name}"] = float(passed)
         self._latest_snapshot = snapshot
 
     def populate_extras(self, extras: Dict[str, float]) -> None:
@@ -146,7 +182,9 @@ class ICWController:
             if value is None:
                 continue
             extras[f"icw/{key}"] = self._as_float(value)
-        extras["icw/backend"] = 1.0 if self.current_backend == "neural" else 0.0
+        current_backend = canonicalize_backend(self.current_backend)
+        extras["icw/backend"] = 1.0 if current_backend == BACKEND_NEURAL else 0.0
+        extras["icw/backend_label"] = current_backend
         extras["icw/abstained"] = 1.0 if self._latest_decision.abstain else 0.0
         extras["icw/dt_scale"] = self._as_float(self._latest_decision.dt_scale)
 
@@ -171,10 +209,17 @@ def attach_icw(neural_env, config: Optional[Dict] = None) -> ICWController:
     """Attach the ICW controller to ``neural_env`` and return it."""
 
     if config is None:
+        try:
+            import yaml
+        except ImportError as exc:  # pragma: no cover - defensive guard
+            raise RuntimeError(
+                "PyYAML is required for ICW auto mode. Install with `pip install pyyaml`."
+            ) from exc
         with DEFAULT_CFG_PATH.open("r", encoding="utf-8") as cfg_file:
             config = yaml.safe_load(cfg_file) or {}
     else:
         config = dict(config)
+    default_backend = canonicalize_backend(config.get("default_backend", BACKEND_ANALYTIC))
     rung_dims = config.get("rungs", [128, 256, 512])
     geometry = LadderGeometryCache(rung_dims=rung_dims, device=torch.device(neural_env.torch_device))
     intuition_cfg = config.get("intuition", {})
@@ -183,7 +228,8 @@ def attach_icw(neural_env, config: Optional[Dict] = None) -> ICWController:
         hysteresis_hi=float(intuition_cfg.get("tau_hi", 0.15)),
         abstain_quantile=float(intuition_cfg.get("abstain_quantile", 0.95)),
         residual_window=int(intuition_cfg.get("residual_window", 1024)),
-        default_backend=config.get("default_backend", "ground-truth"),
+        default_backend=default_backend,
+        abstain_dt_scale=float(intuition_cfg.get("abstain_dt_scale", 0.5)),
     )
     creativity_cfg = config.get("creativity", {})
     creativity = CreativityPlanner(
@@ -194,6 +240,10 @@ def attach_icw(neural_env, config: Optional[Dict] = None) -> ICWController:
     wisdom = WisdomModule(
         disc_weight=float(wisdom_cfg.get("disc_weight", 1.0)),
         rupture_weight=float(wisdom_cfg.get("rupture_weight", 0.5)),
+        connectedness_max=float(wisdom_cfg.get("connectedness_max", 5.0)),
+        monotone_max=float(wisdom_cfg.get("monotone_max", 5.0)),
+        compression_max=float(wisdom_cfg.get("compression_max", 5.0)),
+        residual_min=float(wisdom_cfg.get("residual_min", 0.0)),
     )
     safety_cfg = config.get("safety", {})
     safety = SafetyAutomaton(
@@ -210,7 +260,7 @@ def attach_icw(neural_env, config: Optional[Dict] = None) -> ICWController:
     )
     neural_env.register_auto_controller(controller)
     controller.reset(
-        backend=config.get("default_backend", "ground-truth"),
+        backend=default_backend,
         states=neural_env.states,
     )
     return controller

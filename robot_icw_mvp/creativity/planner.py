@@ -7,6 +7,7 @@ from typing import Dict, Optional
 
 import torch
 
+from robot_icw_mvp.constants import BACKEND_NEURAL
 from robot_icw_mvp.geometry.cache import GeometrySnapshot
 
 
@@ -40,7 +41,7 @@ class CreativityPlanner:
     ) -> CreativityProposal:
         mean_rupture = snapshot.mean_rupture()
         should_branch = (
-            current_backend == "neural"
+            current_backend == BACKEND_NEURAL
             and mean_rupture > self._rupture_threshold
             and self._running_branch_budget > 0
         )

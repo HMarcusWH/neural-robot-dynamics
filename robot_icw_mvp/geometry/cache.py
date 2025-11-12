@@ -107,6 +107,7 @@ class LadderGeometryCache:
             else torch.linalg.norm(states - prev_states, dim=-1)
         )
         self._step_counter += 1
+        residual_agreement = torch.ones(states.shape[0], device=states.device)
         snapshot = GeometrySnapshot(
             states=states,
             prev_states=prev_states,
@@ -114,7 +115,11 @@ class LadderGeometryCache:
             rupture=rupture,
             step_norm=step_norm,
             rung_dims=self._rung_dims,
-            metadata={"ddp": ddp, "step_norm": step_norm},
+            metadata={
+                "ddp": ddp,
+                "step_norm": step_norm,
+                "residual_agreement": residual_agreement,
+            },
             step_index=self._step_counter,
         )
         self._prev_states = states

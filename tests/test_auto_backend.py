@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 import sys
+import contextlib
 import types
 from pathlib import Path
+from typing import List
 from unittest import mock
 
 import torch
@@ -9,167 +13,126 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-# Provide a lightweight cv2 stub so the environment wrapper can be imported in headless CI.
+from robot_icw_mvp.constants import (
+    BACKEND_ABSTAIN,
+    BACKEND_ANALYTIC,
+    BACKEND_AUTO,
+    BACKEND_NEURAL,
+)
+
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
 
 from envs import neural_environment as ne
 
-
-class DummyIntegrator:
-    joint_types = []
-
-    def __init__(self, model, neural_model=None, **kwargs):
-        pass
-
-    def wrap2PI(self, states):
-        return states
-
-    def reset(self):
-        pass
-
-    def set_neural_model(self, neural_model):
-        pass
+from tests.icw_test_utils import dummy_env_patches
 
 
-class DummyEnv:
-    def __init__(self):
-        self.num_envs = 1
-        self.dof_q_per_env = 2
-        self.dof_qd_per_env = 2
-        self.bodies_per_env = 1
-        self.joint_act_dim = 2
-        self.control_dim = 2
-        self.control_limits = [(-1.0, 1.0)] * self.control_dim
-        self.observation_dim = self.dof_q_per_env + self.dof_qd_per_env
-        self.device = "cpu"
-        self.robot_name = "dummy"
-        self.abstract_contacts = types.SimpleNamespace(num_contacts_per_env=0)
-        self.uses_generalized_coordinates = True
-        self.model = object()
-        self.sim_substeps = 1
-        self.sim_dt = 0.02
-        self.frame_dt = 0.02
-        self.integrator = object()
-        self.integrator_type = "ground-truth"
-        self._control = types.SimpleNamespace(joint_act=torch.zeros(self.num_envs * self.joint_act_dim))
-        self.state = types.SimpleNamespace(
-            body_q=torch.zeros(self.num_envs * self.bodies_per_env, 7)
-        )
-        self.control_gains = [1.0] * self.control_dim
-        self.controllable_dofs = list(range(self.control_dim))
-        self.eval_collisions = False
-        self._state_tensor = torch.zeros(self.num_envs, self.dof_q_per_env + self.dof_qd_per_env)
+class ScriptedDecision:
+    def __init__(self, backend: str, action_delta=None, dt_scale: float = 1.0):
+        self.backend = backend
+        self.action_delta = action_delta
+        self.dt_scale = dt_scale
+        self.abstain = backend == BACKEND_ABSTAIN
 
     @property
-    def control(self):
-        return self._control
-
-    def assign_control(self, actions, control, state):
-        control.joint_act = actions.clone().view(-1)
-
-    def update(self):
-        self._state_tensor = torch.ones_like(self._state_tensor)
-
-    def reset(self):
-        self._state_tensor.zero_()
-
-    def reset_envs(self, env_ids=None):
-        self.reset()
-
-    def get_extras(self, extras):
-        return extras
-
-    def close(self):
-        pass
-
-    def compute_observations(self, *_, **__):
-        pass
-
-    def compute_cost_termination(self, *_, **__):
-        pass
-
-    def set_eval_collisions(self, flag):
-        self.eval_collisions = flag
-
-    def save_usd(self):
-        pass
-
-    def render(self):
-        pass
+    def backend_to_apply(self) -> str:
+        if self.backend == BACKEND_ABSTAIN:
+            return BACKEND_ANALYTIC
+        return self.backend
 
 
-class FixedBackendDecision:
-    def __init__(self, backend):
-        self.backend = backend
-        self.backend_to_apply = backend
-        self.action_delta = None
-        self.dt_scale = 1.0
-        self.abstain = False
-
-
-class FixedBackendController:
-    def __init__(self, backend: str):
-        self._backend = backend
-        self.after_calls = []
+class ScriptedController:
+    def __init__(self, decisions: List[ScriptedDecision]):
+        self._decisions = decisions
+        self._cursor = 0
+        self.after_calls: List[str] = []
 
     @property
     def current_backend(self) -> str:
-        return self._backend
+        if self._cursor == 0:
+            return BACKEND_ANALYTIC
+        return self._decisions[min(self._cursor - 1, len(self._decisions) - 1)].backend_to_apply
 
     def before_step(self, actions):
-        return FixedBackendDecision(self._backend)
+        decision = self._decisions[min(self._cursor, len(self._decisions) - 1)]
+        self._cursor += 1
+        return decision
 
     def after_step(self, states, backend: str):
         self.after_calls.append(backend)
 
     def populate_extras(self, extras):
-        extras["icw/backend"] = 1.0 if self._backend == "neural" else 0.0
+        extras.setdefault("icw/backend", 1.0 if self.current_backend == BACKEND_NEURAL else 0.0)
+        extras.setdefault("icw/backend_label", self.current_backend)
 
     def reset(self, backend=None, states=None):
         if backend is not None:
-            self._backend = backend
+            for decision in self._decisions:
+                decision.backend = backend
+        self._cursor = 0
+        self.after_calls.clear()
 
 
-def test_auto_backend_switch_and_logging():
-    dummy_wp = types.SimpleNamespace(
-        from_torch=lambda tensor: tensor.clone() if torch.is_tensor(tensor) else torch.tensor(tensor),
-        to_torch=lambda arr: torch.as_tensor(arr),
-        array=lambda data, **_: torch.as_tensor(data),
-        device_to_torch=lambda device: torch.device(device) if not isinstance(device, torch.device) else device,
-    )
-    dummy_warp_utils = types.SimpleNamespace(
-        eval_ik=lambda *_, **__: None,
-        acquire_states_to_torch=lambda env, states: states.copy_(env._state_tensor),
-        assign_states_from_torch=lambda env, states: setattr(env, "_state_tensor", states.clone()),
-        eval_fk=lambda *_, **__: None,
-    )
+def _with_dummy_env():
+    patches = [
+        mock.patch.object(target, attribute, value)
+        for target, attribute, value in dummy_env_patches(ne)
+    ]
+    patches.append(mock.patch.object(ne, "IntegratorType", types.SimpleNamespace(NEURAL=BACKEND_NEURAL)))
+    return patches
 
-    with mock.patch.object(ne, "create_abstract_contact_env", side_effect=lambda *_, **__: DummyEnv()), \
-        mock.patch.object(ne, "wp", dummy_wp), \
-        mock.patch.object(ne, "warp_utils", dummy_warp_utils), \
-        mock.patch.object(ne, "NeuralIntegrator", DummyIntegrator), \
-        mock.patch.object(ne, "StatefulNeuralIntegrator", DummyIntegrator), \
-        mock.patch.object(ne, "TransformerNeuralIntegrator", DummyIntegrator), \
-        mock.patch.object(ne, "RNNNeuralIntegrator", DummyIntegrator), \
-        mock.patch.object(ne, "IntegratorType", types.SimpleNamespace(NEURAL="neural")):
 
+def test_auto_mode_switches_once_per_step():
+    patches = _with_dummy_env()
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
         env = ne.NeuralEnvironment(
             env_name="Dummy",
             num_envs=1,
-            default_env_mode="ground-truth",
+            default_env_mode=BACKEND_ANALYTIC,
             neural_integrator_cfg={},
             warp_env_cfg={},
         )
-
-        controller = FixedBackendController("neural")
+        controller = ScriptedController([ScriptedDecision(BACKEND_NEURAL)])
         env.register_auto_controller(controller)
-
         actions = torch.full((env.num_envs, env.action_dim), 0.5, device=env.torch_device)
-        env.step(actions, env_mode="auto")
-
-        assert env._active_backend == "neural"
-        assert controller.after_calls[-1] == "neural"
-
+        with mock.patch.object(env, "set_env_mode", wraps=env.set_env_mode) as set_mode:
+            env.step(actions, env_mode=BACKEND_AUTO)
+            assert set_mode.call_count == 1
+        assert controller.after_calls == [BACKEND_NEURAL]
+        assert env._active_backend == BACKEND_NEURAL
         extras = {}
         env.get_extras(extras)
-        assert extras.get("icw/backend") == 1.0
+        assert extras["icw/backend_label"] == BACKEND_NEURAL
+
+
+def test_abstain_path_reduces_dt_and_clamps_actions():
+    patches = _with_dummy_env()
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        env = ne.NeuralEnvironment(
+            env_name="Dummy",
+            num_envs=1,
+            default_env_mode=BACKEND_ANALYTIC,
+            neural_integrator_cfg={},
+            warp_env_cfg={},
+        )
+        # Attach full ICW controller with default config for safety logic.
+        from robot_icw_mvp.adapters.nerd import attach_icw
+
+        controller = attach_icw(env, config={})
+        # Force the controller into neural mode first so that an abstain transition is observable.
+        controller._intuition.reset(BACKEND_NEURAL)
+        high_actions = torch.full((env.num_envs, env.action_dim), 5.0, device=env.torch_device)
+        env.step(high_actions, env_mode=BACKEND_AUTO)
+        # SafetyAutomaton should clamp to scaled limits.
+        applied = env.joint_acts.view(env.num_envs, env.joint_act_dim)
+        assert torch.all(applied <= 1.1 + 1e-6)
+        assert env.env.sim_substeps > env.sim_substeps_gt
+        extras = {}
+        env.get_extras(extras)
+        assert extras["icw/backend"] == 0.0  # analytic fallback
+        assert extras["icw/abstained"] == 1.0
+

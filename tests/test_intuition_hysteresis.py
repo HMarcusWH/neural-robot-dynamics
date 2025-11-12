@@ -3,10 +3,13 @@ from pathlib import Path
 
 import torch
 
+import sys
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
+from robot_icw_mvp.constants import BACKEND_ANALYTIC, BACKEND_NEURAL, BACKEND_ABSTAIN
 from robot_icw_mvp.geometry.cache import GeometrySnapshot
 from robot_icw_mvp.intuition.zoom_controller import IntuitionController
 
@@ -28,34 +31,35 @@ def test_intuition_hysteresis_and_abstention():
         hysteresis_hi=0.2,
         abstain_quantile=0.5,
         residual_window=16,
-        default_backend="ground-truth",
+        default_backend=BACKEND_ANALYTIC,
     )
 
     snap_lo = _make_snapshot(rupture=0.05, step_norm=0.01)
     decision_lo = controller.decide(snap_lo)
-    assert decision_lo.backend == "ground-truth"
-    controller.record(decision_lo.backend, snap_lo)
+    assert decision_lo.backend == BACKEND_ANALYTIC
+    controller.record(decision_lo.effective_backend, snap_lo)
 
     snap_hi = _make_snapshot(rupture=0.25, step_norm=0.02)
     decision_hi = controller.decide(snap_hi)
-    assert decision_hi.backend == "neural"
-    controller.record(decision_hi.backend, snap_hi)
+    assert decision_hi.backend == BACKEND_NEURAL
+    controller.record(decision_hi.effective_backend, snap_hi)
 
     snap_mid = _make_snapshot(rupture=0.15, step_norm=0.02)
     decision_mid = controller.decide(snap_mid)
-    assert decision_mid.backend == "neural"
-    controller.record(decision_mid.backend, snap_mid)
+    assert decision_mid.backend == BACKEND_NEURAL
+    controller.record(decision_mid.effective_backend, snap_mid)
 
     snap_back = _make_snapshot(rupture=0.05, step_norm=0.01)
     decision_back = controller.decide(snap_back)
-    assert decision_back.backend == "ground-truth"
-    controller.record(decision_back.backend, snap_back)
+    assert decision_back.backend == BACKEND_ANALYTIC
+    controller.record(decision_back.effective_backend, snap_back)
 
     for _ in range(12):
         sample = _make_snapshot(rupture=0.12, step_norm=0.1)
         decision = controller.decide(sample)
-        controller.record(decision.backend, sample)
+        controller.record(decision.effective_backend, sample)
 
     abstain_snapshot = _make_snapshot(rupture=0.12, step_norm=1.0)
     abstain_decision = controller.decide(abstain_snapshot)
-    assert abstain_decision.abstain is True
+    assert abstain_decision.backend == BACKEND_ABSTAIN
+    assert abstain_decision.dt_scale < 1.0

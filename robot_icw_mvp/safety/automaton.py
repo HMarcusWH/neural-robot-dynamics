@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 import torch
+
+
+@dataclass
+class SafetyCheckResult:
+    safe: bool
+    clamped_actions: torch.Tensor
+    report: Dict[str, float]
 
 
 class SafetyAutomaton:
@@ -14,23 +22,38 @@ class SafetyAutomaton:
         self._torque_limit_scale = torque_limit_scale
         self._latest_report: Dict[str, float] = {}
 
-    def validate(self, actions: torch.Tensor, control_limits) -> bool:
+    def _prepare_limits(
+        self, control_limits
+    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
         if control_limits is None:
-            self._latest_report = {"max_abs_action": float(actions.abs().max().item())}
-            return True
+            return None
         upper, lower = control_limits
         if upper is None or lower is None:
-            self._latest_report = {"max_abs_action": float(actions.abs().max().item())}
-            return True
-        max_allowed = torch.as_tensor(upper, device=actions.device) * self._torque_limit_scale
-        min_allowed = torch.as_tensor(lower, device=actions.device) * self._torque_limit_scale
-        within = torch.all(actions <= max_allowed) and torch.all(actions >= min_allowed)
-        self._latest_report = {
+            return None
+        return (
+            torch.as_tensor(upper),
+            torch.as_tensor(lower),
+        )
+
+    def validate(self, actions: torch.Tensor, control_limits) -> SafetyCheckResult:
+        limits = self._prepare_limits(control_limits)
+        if limits is None:
+            report = {"max_abs_action": float(actions.abs().max().item())}
+            self._latest_report = report
+            return SafetyCheckResult(True, actions, report)
+
+        upper, lower = limits
+        upper = upper.to(actions.device) * self._torque_limit_scale
+        lower = lower.to(actions.device) * self._torque_limit_scale
+        clamped = torch.max(torch.min(actions, upper), lower)
+        within = torch.allclose(clamped, actions, atol=1e-6)
+        report = {
             "max_abs_action": float(actions.abs().max().item()),
-            "limit": float(max_allowed.abs().max().item()),
+            "limit": float(upper.abs().max().item()),
             "within_limits": float(within),
         }
-        return bool(within)
+        self._latest_report = report
+        return SafetyCheckResult(bool(within), clamped, report)
 
     @property
     def latest_report(self) -> Dict[str, float]:
