@@ -419,17 +419,19 @@ class NeuralEnvironment():
         auto_decision = None
         actions_to_use = actions
         backend_used = env_mode
+        backend_hint = None
         if env_mode == 'auto':
             if self.auto_controller is None:
                 raise RuntimeError('env_mode="auto" requires an attached auto controller')
             auto_decision = self.auto_controller.before_step(actions)
             backend_used = auto_decision.backend_to_apply
+            backend_hint = backend_used
             if auto_decision.action_delta is not None:
                 actions_to_use = actions + auto_decision.action_delta
-            self.set_env_mode('auto', backend_hint=backend_used)
         else:
-            self.set_env_mode(env_mode)
             backend_used = env_mode
+
+        self.set_env_mode(env_mode, backend_hint=backend_hint)
 
         # Convert actions to real values and copy to joint_act array in warp_env
         if self.action_dim > 0:
@@ -488,17 +490,19 @@ class NeuralEnvironment():
         auto_decision = None
         joint_acts_to_use = joint_acts
         backend_used = env_mode
+        backend_hint = None
         if env_mode == 'auto':
             if self.auto_controller is None:
                 raise RuntimeError('env_mode="auto" requires an attached auto controller')
             auto_decision = self.auto_controller.before_step(joint_acts)
             backend_used = auto_decision.backend_to_apply
+            backend_hint = backend_used
             if auto_decision.action_delta is not None:
                 joint_acts_to_use = joint_acts + auto_decision.action_delta
-            self.set_env_mode('auto', backend_hint=backend_used)
         else:
-            self.set_env_mode(env_mode)
             backend_used = env_mode
+
+        self.set_env_mode(env_mode, backend_hint=backend_hint)
 
         # Assign joint_act to warp
         if self.joint_act_dim > 0:

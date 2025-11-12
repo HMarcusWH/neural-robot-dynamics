@@ -1,4 +1,11 @@
+import sys
+from pathlib import Path
+
 import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 from robot_icw_mvp.geometry.cache import LadderGeometryCache
 

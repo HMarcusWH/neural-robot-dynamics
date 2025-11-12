@@ -1,8 +1,13 @@
 import sys
 import types
+from pathlib import Path
 from unittest import mock
 
 import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 # Provide a lightweight cv2 stub so the environment wrapper can be imported in headless CI.
 sys.modules.setdefault("cv2", types.ModuleType("cv2"))
