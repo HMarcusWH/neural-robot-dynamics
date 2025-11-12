@@ -92,8 +92,9 @@ class NeuralSimEvaluator:
     ):
         assert eval_mode in ['rollout', 'single-step'], \
             "'eval_mode' has to be chosen from ['rollout', 'single-step']"
-        assert env_mode in ['neural', 'ground-truth', 'auto'], \
-            "'env_mode' has to be chosen from ['neural', 'ground-truth', 'auto']"
+        normalized_env_mode = 'ground-truth' if env_mode == 'analytic' else env_mode
+        assert normalized_env_mode in ['neural', 'ground-truth', 'auto'], \
+            "'env_mode' has to be chosen from ['neural', 'ground-truth', 'auto', 'analytic']"
         assert trajectory_source in ['sampler', 'dataset', 'reference'], \
             "'trajectory_source' has to be chosen from ['sampler', 'dataset', 'reference']"
         if export_video: # render has to be True if export_video is True

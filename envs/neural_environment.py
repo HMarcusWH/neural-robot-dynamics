@@ -48,7 +48,7 @@ try:  # pragma: no cover - fallback when ICW package is absent
         canonicalize_backend,
     )
 except Exception:  # pragma: no cover - optional dependency guard
-    BACKEND_ANALYTIC = "analytic"
+    BACKEND_ANALYTIC = "ground-truth"
     BACKEND_NEURAL = "neural"
     BACKEND_AUTO = "auto"
     BACKEND_ABSTAIN = "abstain"
@@ -60,9 +60,9 @@ except Exception:  # pragma: no cover - optional dependency guard
 
 
 _LEGACY_ENV_ALIASES = {
+    "analytic": BACKEND_ANALYTIC,
     "ground-truth": BACKEND_ANALYTIC,
     "ground_truth": BACKEND_ANALYTIC,
-    "analytic": BACKEND_ANALYTIC,
     "neural": BACKEND_NEURAL,
     BACKEND_ANALYTIC: BACKEND_ANALYTIC,
     BACKEND_NEURAL: BACKEND_NEURAL,
@@ -195,6 +195,8 @@ class NeuralEnvironment():
             return None
         if isinstance(env_mode, str):
             lowered = env_mode.lower()
+            if lowered == "analytic":
+                lowered = "ground-truth"
         else:
             lowered = env_mode
         if lowered in _LEGACY_ENV_ALIASES:

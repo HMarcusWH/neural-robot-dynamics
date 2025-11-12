@@ -52,7 +52,7 @@ def get_args():
     parser.add_argument("--env-mode",
                         default=None,
                         type=str,
-                        choices=["neural", "ground-truth", "auto"],
+                        choices=["neural", "ground-truth", "analytic", "auto"],
                         help="Environment mode: 'neural' and 'ground-truth' force a single "
                              "backend; 'auto' enables the ICW zoom controller to pick the "
                              "backend on every step.")
@@ -151,6 +151,10 @@ def load_rl_config(args):
         rl_cfg['rl']['config']['horizon_length'] = args.horizon_length
     if args.num_games is not None:
         rl_cfg['rl']['config']['player']['games_num'] = args.num_games
+    env_mode = rl_cfg['env'].get('env_mode')
+    if env_mode == 'analytic':
+        rl_cfg['env']['env_mode'] = 'ground-truth'
+
     rl_cfg['seed'] = args.seed
     
     return rl_cfg
@@ -161,6 +165,10 @@ Construct the neural env.
 """
 def construct_env(env_specs, device, args):
     # copy seed into warp_env_cfg
+    env_mode = env_specs.get('env_mode')
+    if env_mode == 'analytic':
+        env_mode = 'ground-truth'
+        env_specs['env_mode'] = env_mode
     if "warp_env_cfg" not in env_specs:
         env_specs["warp_env_cfg"] = {}
     env_specs["warp_env_cfg"]["seed"] = args.seed

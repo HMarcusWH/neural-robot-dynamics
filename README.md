@@ -6,7 +6,7 @@ This repository contains the implementation for the paper [Neural Robot Dynamics
 [Jie Xu](https://people.csail.mit.edu/jiex), [Eric Heiden](https://eric-heiden.com/), [Iretiayo Akinola](https://research.nvidia.com/person/iretiayo-akinola), [Dieter Fox](https://homes.cs.washington.edu/~fox/), [Miles Macklin](https://blog.mmacklin.com/about/), [Yashraj Narang](https://research.nvidia.com/person/yashraj-narang) <br/>
 ***CoRL 2025***
 
-In this paper, we propose NeRD (Neural Robot Dynamics), learned robot-specific dynamics models for predicting future states for articulated rigid bodies under contact constraints. NeRD uniquely replaces the low-level dynamics and contact solvers in an analytical simulator and employs a robot-centric and spatially-invariant simulation state representation. In this repository, we demonstrate how to integrate NeRD as an interchangeable backend solver within [NVIDIA Warp](https://developer.nvidia.com/warp-python). 
+In this paper, we propose NeRD (Neural Robot Dynamics), learned robot-specific dynamics models for predicting future states for articulated rigid bodies under contact constraints. NeRD uniquely replaces the low-level dynamics and contact solvers in the ground-truth (alias `analytic`) analytical simulator and employs a robot-centric and spatially-invariant simulation state representation. In this repository, we demonstrate how to integrate NeRD as an interchangeable backend solver within [NVIDIA Warp](https://developer.nvidia.com/warp-python).
 
 > [!Note]
 > See the work-in-progress branch ([nerd_newton_dev](https://github.com/NVlabs/neural-robot-dynamics/tree/nerd_newton_dev)) for ongoing integration of NeRD as a backend solver within [Newton](https://github.com/newton-physics/newton) physics.
@@ -68,7 +68,7 @@ python eval_passive_motion.py --env-name PendulumWithContact --model-path ../../
 
 
 ### Auto Mode Quickstart
-`env_mode=auto` enables the ICW (Intuition–Creativity–Wisdom) controller to choose between the analytic and neural backends on every step. A minimal passive-evaluation run looks like:
+`env_mode=auto` enables the ICW (Intuition–Creativity–Wisdom) controller to choose between the ground-truth (alias `analytic`) and neural backends on every step. A minimal passive-evaluation run looks like:
 
 ```
 cd eval/eval_passive
@@ -84,7 +84,7 @@ The example above uses the packaged slider preset at `robot_icw_mvp/configs/defa
 
 During training or evaluation the NeRD wrappers surface the controller’s telemetry through the existing `extras` dictionary. The key groups are:
 
-- `icw/backend`: 1.0 when the neural backend ran on the current step, 0.0 for the analytic fallback.
+- `icw/backend`: 1.0 when the neural backend ran on the current step, 0.0 for the ground-truth fallback (alias `analytic`).
 - `icw/intuition/*`: hysteresis signals such as rupture, step norms, abstain thresholds, and dt-scale decisions.
 - `icw/wisdom/*`: continuity diagnostics (Disc, rupture, step norms) plus certificate pass/fail flags.
 - `icw/safety/*` and `icw/creativity/*`: safety-limit reports and branch triggers for the lightweight planner.
@@ -105,9 +105,9 @@ print(f"backend={extras['icw/backend_label']} (neural_prob={extras['icw/backend'
 You can test an individual RL policy using the [`run_rl.py`](eval/eval_rl/run_rl.py) script:
 ```
 cd eval/eval_rl
-python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --playback ../../pretrained_models/RL_policies/Anymal/forward_walk/0/nn/AnymalPPO.pth --num-envs 1 --num-games 2 --env-mode [neural|analytic] [--render]
+python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --playback ../../pretrained_models/RL_policies/Anymal/forward_walk/0/nn/AnymalPPO.pth --num-envs 1 --num-games 2 --env-mode [neural|ground-truth] [--render]
 ```
-where `--env-mode` specifies the backend: `neural` for NeRD dynamics or `analytic` (legacy alias `ground-truth`) for the analytical simulator.
+where `--env-mode` specifies the backend: `neural` for NeRD dynamics or `ground-truth` (alias `analytic`) for the analytical simulator.
 
 To evaluate a batch of policies with different seeds in both ground-truth dynamics and NeRD dynamics (as done in Table 1 in the paper), you can run the batch evaluation script with the batch evaluation config file:
 ```
@@ -155,7 +155,7 @@ python train.py --cfg ./cfg/Ant/transformer.yaml --logdir ../../data/trained_mod
 ```
 
 ## Train RL Policies in a NeRD-Integrated Simulator
-We use [rl-games](https://github.com/Denys88/rl_games) to train RL policies within a NeRD-integrated simulator. Thanks to the seamless design of the NeRD integrator within Warp simulator, we can turn on the using of NeRD dynamics models by simply call the [`set_env_mode`](envs/neural_environment.py#L314) function in `NeuralEnvironment` class to switch between using the NeRD dynamics and using the analytical dynamics. Below shows an example to train the RL policy for the *ANYmal* forward walking task.
+We use [rl-games](https://github.com/Denys88/rl_games) to train RL policies within a NeRD-integrated simulator. Thanks to the seamless design of the NeRD integrator within Warp simulator, we can turn on the using of NeRD dynamics models by simply call the [`set_env_mode`](envs/neural_environment.py#L314) function in `NeuralEnvironment` class to switch between using the NeRD dynamics and using the ground-truth (alias `analytic`) dynamics. Below shows an example to train the RL policy for the *ANYmal* forward walking task.
 ```
 cd eval/eval_rl
 python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --env-mode neural --nerd-model-path ../../pretrained_models/NeRD_models/Anymal/model/nn/model.pt 

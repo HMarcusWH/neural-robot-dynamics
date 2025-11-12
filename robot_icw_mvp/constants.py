@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import Dict
 
 
-BACKEND_ANALYTIC = "analytic"
+BACKEND_ANALYTIC = "ground-truth"
 BACKEND_NEURAL = "neural"
 BACKEND_ABSTAIN = "abstain"
 BACKEND_AUTO = "auto"
 
 _LEGACY_ALIASES: Dict[str, str] = {
+    "analytic": BACKEND_ANALYTIC,
     "ground-truth": BACKEND_ANALYTIC,
     "ground_truth": BACKEND_ANALYTIC,
     "gt": BACKEND_ANALYTIC,
