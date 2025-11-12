@@ -210,11 +210,11 @@ def attach_icw(neural_env, config: Optional[Dict] = None) -> ICWController:
 
     if config is None:
         try:
-            import yaml
-        except ImportError as exc:  # pragma: no cover - defensive guard
-            raise RuntimeError(
-                "PyYAML is required for ICW auto mode. Install with `pip install pyyaml`."
-            ) from exc
+            import yaml  # type: ignore
+        except Exception as exc:  # pragma: no cover - defensive guard
+            raise RuntimeError("ICW default config requires PyYAML") from exc
+        if yaml is None:  # pragma: no cover - defensive guard
+            raise RuntimeError("ICW default config requires PyYAML")
         with DEFAULT_CFG_PATH.open("r", encoding="utf-8") as cfg_file:
             config = yaml.safe_load(cfg_file) or {}
     else:

@@ -49,7 +49,7 @@ if __name__ == '__main__':
     parser.add_argument('--env-mode',
                         default = 'neural',
                         type = str,
-                        choices = ['neural', 'ground-truth', 'auto'])
+                        choices = ['neural', 'ground-truth', 'analytic', 'auto'])
     parser.add_argument('--num-envs', 
                         default = 1,
                         type = int)
@@ -81,6 +81,9 @@ if __name__ == '__main__':
     device = 'cuda:0'
 
     set_random_seed(args.seed)
+
+    if args.env_mode == 'analytic':
+        args.env_mode = 'ground-truth'
 
     env_cfg = {
         "env_name": args.env_name,

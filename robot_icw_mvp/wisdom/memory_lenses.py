@@ -51,12 +51,19 @@ class WisdomModule:
             "C4_residual_agreement": residual_agreement >= self._residual_min,
         }
         passed = all(certificates.values())
+        metrics = {
+            "disc": disc,
+            "rupture": rupture,
+            "step_norm": step_norm,
+        }
+        metrics.update(
+            {
+                f"certificates/{name}": 1.0 if flag else 0.0
+                for name, flag in certificates.items()
+            }
+        )
         summary = WisdomSummary(
-            metrics={
-                "disc": disc,
-                "rupture": rupture,
-                "step_norm": step_norm,
-            },
+            metrics=metrics,
             certificates=certificates,
             certificates_passed=passed,
         )
@@ -71,6 +78,9 @@ class WisdomModule:
         summary = self._evaluate_certificates(snapshot)
         backend_label = canonicalize_backend(decision_backend)
         summary.metrics["backend"] = 1.0 if backend_label == BACKEND_NEURAL else 0.0
+        summary.metrics["certificates_passed"] = (
+            1.0 if summary.certificates_passed else 0.0
+        )
         self._latest_summary = summary
         return summary
 

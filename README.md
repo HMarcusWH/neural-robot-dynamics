@@ -105,9 +105,9 @@ print(f"backend={extras['icw/backend_label']} (neural_prob={extras['icw/backend'
 You can test an individual RL policy using the [`run_rl.py`](eval/eval_rl/run_rl.py) script:
 ```
 cd eval/eval_rl
-python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --playback ../../pretrained_models/RL_policies/Anymal/forward_walk/0/nn/AnymalPPO.pth --num-envs 1 --num-games 2 --env-mode [neural|analytic] [--render]
+python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --playback ../../pretrained_models/RL_policies/Anymal/forward_walk/0/nn/AnymalPPO.pth --num-envs 1 --num-games 2 --env-mode [neural|ground-truth] [--render]
 ```
-where `--env-mode` specifies the backend: `neural` for NeRD dynamics or `analytic` (legacy alias `ground-truth`) for the analytical simulator.
+where `--env-mode` specifies the backend: `neural` for NeRD dynamics or `ground-truth` (alias `analytic`) for the analytical simulator.
 
 To evaluate a batch of policies with different seeds in both ground-truth dynamics and NeRD dynamics (as done in Table 1 in the paper), you can run the batch evaluation script with the batch evaluation config file:
 ```
