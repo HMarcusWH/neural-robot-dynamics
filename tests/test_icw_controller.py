@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 import sys
 import types
 from pathlib import Path
@@ -136,7 +137,46 @@ def test_deterministic_trace_with_seed():
         env.reset()
         controller.reset(backend=BACKEND_ANALYTIC, states=env.states)
         trace2 = run_trace()
-        assert trace1 == trace2
+        expected = [(BACKEND_ANALYTIC, 0.0, 0.0)] * 3
+        assert trace1 == expected
+        assert trace2 == expected
+
+
+def test_step_records_expected_metrics():
+    patches = _patched_env()
+    with contextlib.ExitStack() as stack:
+        for patch in patches:
+            stack.enter_context(patch)
+        env = ne.NeuralEnvironment(
+            env_name="Dummy",
+            num_envs=1,
+            default_env_mode=BACKEND_ANALYTIC,
+            neural_integrator_cfg={},
+            warp_env_cfg={},
+        )
+        controller = attach_icw(env, config={})
+        actions = torch.zeros((env.num_envs, env.action_dim), device=env.torch_device)
+        env.step(actions, env_mode=BACKEND_AUTO)
+
+        extras = {}
+        env.get_extras(extras)
+        assert extras["icw/backend"] == pytest.approx(0.0)
+        assert extras["icw/abstained"] == pytest.approx(0.0)
+
+        decision = controller._latest_decision
+        assert decision.backend == BACKEND_ANALYTIC
+        assert decision.extras["intuition/rupture"] == pytest.approx(0.0)
+        assert decision.extras["creativity/triggered"] == pytest.approx(0.0)
+        assert math.isinf(decision.extras["intuition/abstain_threshold"])
+        for key in (
+            "wisdom/certificates/C1_connectedness",
+            "wisdom/certificates/C2_monotone_up",
+            "wisdom/certificates/C3_compression_robust",
+            "wisdom/certificates/C4_residual_agreement",
+        ):
+            assert decision.extras[key] == pytest.approx(1.0)
+        assert decision.extras["wisdom/certificates"] == pytest.approx(1.0)
+        assert decision.extras["wisdom/backend"] == pytest.approx(0.0)
 
 
 def test_attach_requires_yaml_when_config_missing():
