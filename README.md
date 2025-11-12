@@ -80,12 +80,25 @@ python eval_passive_motion.py \
   --num-envs 1 --num-rollouts 5 --rollout-horizon 100
 ```
 
+The example above uses the packaged slider preset at `robot_icw_mvp/configs/default_icw.yaml`; you can copy and edit that YAML to create your own presets.
+
 During training or evaluation the NeRD wrappers surface the controller’s telemetry through the existing `extras` dictionary. The key groups are:
 
 - `icw/backend`: 1.0 when the neural backend ran on the current step, 0.0 for the analytic fallback.
 - `icw/intuition/*`: hysteresis signals such as rupture, step norms, abstain thresholds, and dt-scale decisions.
 - `icw/wisdom/*`: continuity diagnostics (Disc, rupture, step norms) plus certificate pass/fail flags.
 - `icw/safety/*` and `icw/creativity/*`: safety-limit reports and branch triggers for the lightweight planner.
+
+For example, the passive evaluator already prints the backend choice; you can also log the extras manually:
+
+```python
+extras = {}
+neural_env.get_extras(extras)
+print(f"backend={extras['icw/backend_label']} (neural_prob={extras['icw/backend']:.1f})")
+```
+
+> [!WARNING]
+> `env_mode=auto` requires a NeRD checkpoint. The passive evaluator and RL harness will raise `ValueError("'auto' env mode requires a neural model. Provide --model-path.")` if `--model-path` is omitted.
 
 
 ### RL Policy Evaluation
