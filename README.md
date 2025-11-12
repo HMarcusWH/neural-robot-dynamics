@@ -6,7 +6,7 @@ This repository contains the implementation for the paper [Neural Robot Dynamics
 [Jie Xu](https://people.csail.mit.edu/jiex), [Eric Heiden](https://eric-heiden.com/), [Iretiayo Akinola](https://research.nvidia.com/person/iretiayo-akinola), [Dieter Fox](https://homes.cs.washington.edu/~fox/), [Miles Macklin](https://blog.mmacklin.com/about/), [Yashraj Narang](https://research.nvidia.com/person/yashraj-narang) <br/>
 ***CoRL 2025***
 
-In this paper, we propose NeRD (Neural Robot Dynamics), learned robot-specific dynamics models for predicting future states for articulated rigid bodies under contact constraints. NeRD uniquely replaces the low-level dynamics and contact solvers in an analytical simulator and employs a robot-centric and spatially-invariant simulation state representation. In this repository, we demonstrate how to integrate NeRD as an interchangeable backend solver within [NVIDIA Warp](https://developer.nvidia.com/warp-python). 
+In this paper, we propose NeRD (Neural Robot Dynamics), learned robot-specific dynamics models for predicting future states for articulated rigid bodies under contact constraints. NeRD uniquely replaces the low-level dynamics and contact solvers in the ground-truth (alias `analytic`) analytical simulator and employs a robot-centric and spatially-invariant simulation state representation. In this repository, we demonstrate how to integrate NeRD as an interchangeable backend solver within [NVIDIA Warp](https://developer.nvidia.com/warp-python).
 
 > [!Note]
 > See the work-in-progress branch ([nerd_newton_dev](https://github.com/NVlabs/neural-robot-dynamics/tree/nerd_newton_dev)) for ongoing integration of NeRD as a backend solver within [Newton](https://github.com/newton-physics/newton) physics.
@@ -155,7 +155,7 @@ python train.py --cfg ./cfg/Ant/transformer.yaml --logdir ../../data/trained_mod
 ```
 
 ## Train RL Policies in a NeRD-Integrated Simulator
-We use [rl-games](https://github.com/Denys88/rl_games) to train RL policies within a NeRD-integrated simulator. Thanks to the seamless design of the NeRD integrator within Warp simulator, we can turn on the using of NeRD dynamics models by simply call the [`set_env_mode`](envs/neural_environment.py#L314) function in `NeuralEnvironment` class to switch between using the NeRD dynamics and using the analytical dynamics. Below shows an example to train the RL policy for the *ANYmal* forward walking task.
+We use [rl-games](https://github.com/Denys88/rl_games) to train RL policies within a NeRD-integrated simulator. Thanks to the seamless design of the NeRD integrator within Warp simulator, we can turn on the using of NeRD dynamics models by simply call the [`set_env_mode`](envs/neural_environment.py#L314) function in `NeuralEnvironment` class to switch between using the NeRD dynamics and using the ground-truth (alias `analytic`) dynamics. Below shows an example to train the RL policy for the *ANYmal* forward walking task.
 ```
 cd eval/eval_rl
 python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --env-mode neural --nerd-model-path ../../pretrained_models/NeRD_models/Anymal/model/nn/model.pt 
