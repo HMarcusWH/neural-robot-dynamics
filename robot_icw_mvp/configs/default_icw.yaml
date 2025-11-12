@@ -2,6 +2,7 @@
 # The values mirror the qualitative defaults described in the design note
 # and act as a safe starting point for experiments.
 rungs: [128, 256, 512]
+default_backend: ground-truth
 intuition:
   tau_lo: 0.08
   tau_hi: 0.15

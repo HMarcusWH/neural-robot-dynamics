@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Optional
 
 import torch
+import yaml
 
 from robot_icw_mvp.creativity.planner import CreativityPlanner, CreativityProposal
 from robot_icw_mvp.geometry.cache import LadderGeometryCache, GeometrySnapshot
 from robot_icw_mvp.intuition.zoom_controller import IntuitionController, IntuitionDecision
 from robot_icw_mvp.safety.automaton import SafetyAutomaton
 from robot_icw_mvp.wisdom.memory_lenses import WisdomModule, WisdomSummary
+
+DEFAULT_CFG_PATH = Path(__file__).resolve().parent / "configs" / "default_icw.yaml"
 
 
 @dataclass
@@ -60,6 +64,14 @@ class ICWController:
             self._geometry.observe(env.states)
             self._intuition.reset(self._intuition.current_backend)
 
+    @staticmethod
+    def _as_float(value) -> float:
+        if value is None:
+            return 0.0
+        if isinstance(value, torch.Tensor):
+            return float(value.item())
+        return float(value)
+
     @property
     def current_backend(self) -> str:
         decision = self._latest_decision
@@ -84,15 +96,21 @@ class ICWController:
         safe = self._safety.validate(candidate_actions, self._env.control_limits)
         abstain = intuition_decision.abstain or not safe
         backend = intuition_decision.backend
+        safety_report = self._safety.latest_report
         extras = {
-            "intuition/rupture": intuition_decision.metrics.get("rupture", 0.0),
-            "intuition/step_norm": intuition_decision.metrics.get("step_norm", 0.0),
-            "intuition/abstain_threshold": intuition_decision.metrics.get(
-                "abstain_threshold", float("inf")
+            "intuition/rupture": self._as_float(intuition_decision.metrics.get("rupture", 0.0)),
+            "intuition/step_norm": self._as_float(intuition_decision.metrics.get("step_norm", 0.0)),
+            "intuition/abstain_threshold": self._as_float(
+                intuition_decision.metrics.get("abstain_threshold", float("inf"))
             ),
             "creativity/triggered": 1.0 if creativity_proposal.triggered else 0.0,
-            "safety/within_limits": self._safety.latest_report.get("within_limits", 1.0),
+            "creativity/rupture": self._as_float(
+                creativity_proposal.metadata.get("rupture", intuition_decision.metrics.get("rupture", 0.0))
+            ),
+            "intuition/dt_scale": self._as_float(intuition_decision.dt_scale),
         }
+        for key, value in safety_report.items():
+            extras[f"safety/{key}"] = self._as_float(value)
         decision = ICWDecision(
             backend=backend,
             action_delta=creativity_proposal.delta_actions,
@@ -113,15 +131,24 @@ class ICWController:
         wisdom_summary = self._wisdom.summarize(snapshot, backend)
         if self._latest_decision is not None:
             self._latest_decision.wisdom = wisdom_summary
-            self._latest_decision.extras.update(wisdom_summary.metrics)
-            self._latest_decision.extras["wisdom/certificates"] = 1.0 if wisdom_summary.certificates_passed else 0.0
+            self._latest_decision.extras.update(
+                {f"wisdom/{k}": self._as_float(v) for k, v in wisdom_summary.metrics.items()}
+            )
+            self._latest_decision.extras["wisdom/certificates"] = (
+                1.0 if wisdom_summary.certificates_passed else 0.0
+            )
         self._latest_snapshot = snapshot
 
     def populate_extras(self, extras: Dict[str, float]) -> None:
         if self._latest_decision is None:
             return
-        extras.update({f"icw/{k}": v for k, v in self._latest_decision.extras.items()})
+        for key, value in self._latest_decision.extras.items():
+            if value is None:
+                continue
+            extras[f"icw/{key}"] = self._as_float(value)
         extras["icw/backend"] = 1.0 if self.current_backend == "neural" else 0.0
+        extras["icw/abstained"] = 1.0 if self._latest_decision.abstain else 0.0
+        extras["icw/dt_scale"] = self._as_float(self._latest_decision.dt_scale)
 
     def reset(
         self,
@@ -143,7 +170,11 @@ class ICWController:
 def attach_icw(neural_env, config: Optional[Dict] = None) -> ICWController:
     """Attach the ICW controller to ``neural_env`` and return it."""
 
-    config = config or {}
+    if config is None:
+        with DEFAULT_CFG_PATH.open("r", encoding="utf-8") as cfg_file:
+            config = yaml.safe_load(cfg_file) or {}
+    else:
+        config = dict(config)
     rung_dims = config.get("rungs", [128, 256, 512])
     geometry = LadderGeometryCache(rung_dims=rung_dims, device=torch.device(neural_env.torch_device))
     intuition_cfg = config.get("intuition", {})

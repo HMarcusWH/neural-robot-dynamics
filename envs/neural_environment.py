@@ -122,13 +122,14 @@ class NeuralEnvironment():
 
         # states in generalized coordinates
         self.states = torch.zeros(
-            (self.num_envs, self.state_dim), 
+            (self.num_envs, self.state_dim),
             device = self.torch_device
         )
         self.joint_acts = torch.zeros(
-            (self.num_envs, self.joint_act_dim), 
+            (self.num_envs, self.joint_act_dim),
             device = self.torch_device
         )
+        self._control_limits_cache = None
 
         # root body q (used for dataset generation)
         self.root_body_q = wp.to_torch(
@@ -200,7 +201,26 @@ class NeuralEnvironment():
 
     @property
     def control_limits(self):
-        return self.action_limits
+        if self._control_limits_cache is None:
+            if self.action_dim == 0:
+                self._control_limits_cache = (None, None)
+            else:
+                limits = getattr(self.env, "control_limits", None)
+                if limits is None:
+                    self._control_limits_cache = (None, None)
+                else:
+                    lower = torch.tensor(
+                        [lim[0] for lim in limits],
+                        device=self.torch_device,
+                        dtype=torch.float32,
+                    )
+                    upper = torch.tensor(
+                        [lim[1] for lim in limits],
+                        device=self.torch_device,
+                        dtype=torch.float32,
+                    )
+                    self._control_limits_cache = (upper, lower)
+        return self._control_limits_cache
     
     @property
     def observation_dim(self):
@@ -335,14 +355,17 @@ class NeuralEnvironment():
             raise NotImplementedError
         self._active_backend = backend
 
-    def set_env_mode(self, env_mode):
+    def set_env_mode(self, env_mode, backend_hint: Optional[str] = None):
         self.env_mode = env_mode
         if self.env_mode == 'auto':
-            backend = 'ground-truth'
-            if self.auto_controller is not None:
+            if backend_hint is not None:
+                backend = backend_hint
+            elif self.auto_controller is not None:
                 backend = self.auto_controller.current_backend
             elif self._active_backend is not None:
                 backend = self._active_backend
+            else:
+                backend = 'ground-truth'
             self._apply_backend(backend)
         elif self.env_mode in ['ground-truth', 'neural']:
             self._apply_backend(self.env_mode)
@@ -399,12 +422,11 @@ class NeuralEnvironment():
         if env_mode == 'auto':
             if self.auto_controller is None:
                 raise RuntimeError('env_mode="auto" requires an attached auto controller')
-            self.env_mode = 'auto'
             auto_decision = self.auto_controller.before_step(actions)
             backend_used = auto_decision.backend_to_apply
             if auto_decision.action_delta is not None:
                 actions_to_use = actions + auto_decision.action_delta
-            self._apply_backend(backend_used)
+            self.set_env_mode('auto', backend_hint=backend_used)
         else:
             self.set_env_mode(env_mode)
             backend_used = env_mode
@@ -469,19 +491,18 @@ class NeuralEnvironment():
         if env_mode == 'auto':
             if self.auto_controller is None:
                 raise RuntimeError('env_mode="auto" requires an attached auto controller')
-            self.env_mode = 'auto'
             auto_decision = self.auto_controller.before_step(joint_acts)
             backend_used = auto_decision.backend_to_apply
             if auto_decision.action_delta is not None:
                 joint_acts_to_use = joint_acts + auto_decision.action_delta
-            self._apply_backend(backend_used)
+            self.set_env_mode('auto', backend_hint=backend_used)
         else:
             self.set_env_mode(env_mode)
             backend_used = env_mode
 
         # Assign joint_act to warp
         if self.joint_act_dim > 0:
-            self.env.joint_act.assign(wp.array(joint_acts_to_use.view(-1)))
+            self.env.control.joint_act.assign(wp.array(joint_acts_to_use.view(-1)))
             self.joint_acts.copy_(
                 wp.to_torch(self.env.control.joint_act).view(
                     self.num_envs,

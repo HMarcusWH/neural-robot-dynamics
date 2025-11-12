@@ -134,7 +134,7 @@ if __name__ == '__main__':
         neural_env,
         args.dataset_path,
         args.rollout_horizon,
-        device = device
+        device=device,
     )
 
     set_random_seed(args.seed)
@@ -230,7 +230,3 @@ if __name__ == '__main__':
     
     if args.export_usd:
         neural_env.save_usd()
-    parser.add_argument('--icw-cfg',
-                        default=None,
-                        type=str,
-                        help='Optional path to an ICW slider configuration file.')

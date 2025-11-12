@@ -67,6 +67,27 @@ python eval_passive_motion.py --env-name PendulumWithContact --model-path ../../
 ```
 
 
+### Auto Mode Quickstart
+`env_mode=auto` enables the ICW (Intuition–Creativity–Wisdom) controller to choose between the analytic and neural backends on every step. A minimal passive-evaluation run looks like:
+
+```
+cd eval/eval_passive
+python eval_passive_motion.py \
+  --env-name Cartpole \
+  --model-path ../../pretrained_models/NeRD_models/Cartpole/model/nn/model.pt \
+  --env-mode auto \
+  --icw-cfg ../../robot_icw_mvp/configs/default_icw.yaml \
+  --num-envs 1 --num-rollouts 5 --rollout-horizon 100
+```
+
+During training or evaluation the NeRD wrappers surface the controller’s telemetry through the existing `extras` dictionary. The key groups are:
+
+- `icw/backend`: 1.0 when the neural backend ran on the current step, 0.0 for the analytic fallback.
+- `icw/intuition/*`: hysteresis signals such as rupture, step norms, abstain thresholds, and dt-scale decisions.
+- `icw/wisdom/*`: continuity diagnostics (Disc, rupture, step norms) plus certificate pass/fail flags.
+- `icw/safety/*` and `icw/creativity/*`: safety-limit reports and branch triggers for the lightweight planner.
+
+
 ### RL Policy Evaluation
 You can test an individual RL policy using the [`run_rl.py`](eval/eval_rl/run_rl.py) script:
 ```
