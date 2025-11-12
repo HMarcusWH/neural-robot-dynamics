@@ -83,6 +83,14 @@ for sim_idx, sim_name in enumerate(sim_variants.keys()):
     sim_cfg = sim_variants[sim_name]
     env_cfg['env_mode'] = sim_cfg['env_mode']
     env_cfg['model_path'] = sim_cfg.get('model_path', None)
+    if 'icw_cfg_path' in sim_cfg:
+        env_cfg['icw_cfg_path'] = sim_cfg['icw_cfg_path']
+    else:
+        env_cfg.pop('icw_cfg_path', None)
+    if 'icw_cfg' in sim_cfg:
+        env_cfg['icw_cfg'] = sim_cfg['icw_cfg']
+    else:
+        env_cfg.pop('icw_cfg', None)
     env = construct_env(env_cfg, 'cuda:0', args)
     for policy_idx, policy_name in enumerate(policy_variants.keys()):
         agg_results = {'reward': 0, 'steps': 0}

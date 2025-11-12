@@ -32,6 +32,7 @@ from utils.torch_utils import num_params_torch_model
 from utils.python_utils import set_random_seed
 from utils import torch_utils
 from utils.evaluator import NeuralSimEvaluator
+from robot_icw_mvp import attach_icw
 
 
 if __name__ == '__main__':
@@ -48,7 +49,7 @@ if __name__ == '__main__':
     parser.add_argument('--env-mode',
                         default = 'neural',
                         type = str,
-                        choices = ['neural', 'ground-truth'])
+                        choices = ['neural', 'ground-truth', 'auto'])
     parser.add_argument('--num-envs', 
                         default = 1,
                         type = int)
@@ -70,6 +71,10 @@ if __name__ == '__main__':
                         default = 'video.gif')
     parser.add_argument('--export-usd',
                         action='store_true')
+    parser.add_argument('--icw-cfg',
+                        default=None,
+                        type=str,
+                        help='Optional path to an ICW slider configuration file.')
     
     args = parser.parse_args()
 
@@ -111,15 +116,24 @@ if __name__ == '__main__':
         neural_model = model,
         **env_cfg
     )
-    
+
     if model is not None:
         assert neural_env.robot_name == robot_name, \
             "neural_env.robot_name is not equal to neural_model's robot_name."
-        
+
+    if args.env_mode == 'auto':
+        if model is None:
+            raise ValueError("'auto' env mode requires a neural model. Provide --model-path.")
+        icw_cfg = None
+        if args.icw_cfg is not None:
+            with open(args.icw_cfg, 'r') as cfg_file:
+                icw_cfg = yaml.load(cfg_file, Loader=yaml.SafeLoader)
+        attach_icw(neural_env, icw_cfg)
+
     evaluator = NeuralSimEvaluator(
-        neural_env, 
-        args.dataset_path, 
-        args.rollout_horizon, 
+        neural_env,
+        args.dataset_path,
+        args.rollout_horizon,
         device = device
     )
 
@@ -216,3 +230,7 @@ if __name__ == '__main__':
     
     if args.export_usd:
         neural_env.save_usd()
+    parser.add_argument('--icw-cfg',
+                        default=None,
+                        type=str,
+                        help='Optional path to an ICW slider configuration file.')

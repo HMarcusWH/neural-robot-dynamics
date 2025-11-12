@@ -92,8 +92,8 @@ class NeuralSimEvaluator:
     ):
         assert eval_mode in ['rollout', 'single-step'], \
             "'eval_mode' has to be chosen from ['rollout', 'single-step']"
-        assert env_mode in ['neural', 'ground-truth'], \
-            "'env_mode' has to be chosen from ['neural', 'ground-truth']"
+        assert env_mode in ['neural', 'ground-truth', 'auto'], \
+            "'env_mode' has to be chosen from ['neural', 'ground-truth', 'auto']"
         assert trajectory_source in ['sampler', 'dataset', 'reference'], \
             "'trajectory_source' has to be chosen from ['sampler', 'dataset', 'reference']"
         if export_video: # render has to be True if export_video is True
@@ -198,7 +198,8 @@ class NeuralSimEvaluator:
         
         rollout_states[0, ...].copy_(initial_states)
         
-        if env_mode == "neural":
+        if env_mode in ["neural", "auto"] and \
+                self.neural_env.integrator_neural.neural_model is not None:
             self.neural_env.integrator_neural.neural_model.eval()
 
         self.neural_env.set_env_mode(env_mode)

@@ -114,7 +114,9 @@ class NeuralEnvironment():
             print_warning('[NeuralEnvironment] Created a DUMMY Neural Integrator.')
 
         # default env mode
-        assert default_env_mode in ['ground-truth', 'neural']
+        assert default_env_mode in ['ground-truth', 'neural', 'auto']
+        self.auto_controller = None
+        self._active_backend = None
         self.default_env_mode = default_env_mode
         self.set_env_mode(default_env_mode)
 
@@ -296,6 +298,8 @@ class NeuralEnvironment():
         extras: dict
     ):
         self.env.get_extras(extras)
+        if self.auto_controller is not None:
+            self.auto_controller.populate_extras(extras)
 
     def close(self):
         self.env.close()
@@ -311,18 +315,37 @@ class NeuralEnvironment():
     def set_neural_model(self, neural_model):
         self.integrator_neural.set_neural_model(neural_model)
 
-    def set_env_mode(self, env_mode):
-        self.env_mode = env_mode
-        if self.env_mode == 'ground-truth':
+    def register_auto_controller(self, controller):
+        self.auto_controller = controller
+        # Re-apply the current env mode so the controller can take over.
+        self.set_env_mode(self.env_mode)
+
+    def _apply_backend(self, backend):
+        if backend == 'ground-truth':
             self.env.integrator = self.integrator_gt
             self.env.sim_substeps = self.sim_substeps_gt
             self.env.sim_dt = self.env.frame_dt / self.env.sim_substeps
             self.env.integrator_type = self.integrator_type_gt
-        elif self.env_mode  == 'neural':
+        elif backend == 'neural':
             self.env.integrator = self.integrator_neural
             self.env.sim_substeps = self.sim_substeps_neural
             self.env.sim_dt = self.env.frame_dt / self.env.sim_substeps
             self.env.integrator_type = IntegratorType.NEURAL
+        else:
+            raise NotImplementedError
+        self._active_backend = backend
+
+    def set_env_mode(self, env_mode):
+        self.env_mode = env_mode
+        if self.env_mode == 'auto':
+            backend = 'ground-truth'
+            if self.auto_controller is not None:
+                backend = self.auto_controller.current_backend
+            elif self._active_backend is not None:
+                backend = self._active_backend
+            self._apply_backend(backend)
+        elif self.env_mode in ['ground-truth', 'neural']:
+            self._apply_backend(self.env_mode)
         else:
             raise NotImplementedError
 
@@ -361,7 +384,7 @@ class NeuralEnvironment():
         env_mode = None
     ) -> torch.Tensor:
         
-        assert env_mode in [None, 'neural', 'ground-truth']
+        assert env_mode in [None, 'neural', 'ground-truth', 'auto']
         assert actions.shape[0] == self.num_envs
         assert actions.shape[1] == self.action_dim
         assert actions.device == self.torch_device or \
@@ -370,16 +393,30 @@ class NeuralEnvironment():
         if env_mode is None:
             env_mode = self.default_env_mode
 
-        # Update env mode
-        self.set_env_mode(env_mode)
+        auto_decision = None
+        actions_to_use = actions
+        backend_used = env_mode
+        if env_mode == 'auto':
+            if self.auto_controller is None:
+                raise RuntimeError('env_mode="auto" requires an attached auto controller')
+            self.env_mode = 'auto'
+            auto_decision = self.auto_controller.before_step(actions)
+            backend_used = auto_decision.backend_to_apply
+            if auto_decision.action_delta is not None:
+                actions_to_use = actions + auto_decision.action_delta
+            self._apply_backend(backend_used)
+        else:
+            self.set_env_mode(env_mode)
+            backend_used = env_mode
+
         # Convert actions to real values and copy to joint_act array in warp_env
         if self.action_dim > 0:
             self.env.assign_control(
-                wp.from_torch(actions), 
+                wp.from_torch(actions_to_use),
                 self.env.control,
                 self.env.state
             )
-            # store converted joint_acts 
+            # store converted joint_acts
             self.joint_acts.copy_(
                 wp.to_torch(self.env.control.joint_act).view(
                     self.num_envs,
@@ -403,6 +440,9 @@ class NeuralEnvironment():
             self.states.max(dim = 0).values
         )
 
+        if auto_decision is not None:
+            self.auto_controller.after_step(self.states, backend_used)
+
         return self.states
 
     """
@@ -414,7 +454,7 @@ class NeuralEnvironment():
         env_mode = None
     ) -> torch.Tensor:
         
-        assert env_mode in [None, 'neural', 'ground-truth']
+        assert env_mode in [None, 'neural', 'ground-truth', 'auto']
         assert joint_acts.shape[0] == self.num_envs
         assert joint_acts.shape[1] == self.joint_act_dim
         assert joint_acts.device == self.torch_device or \
@@ -423,12 +463,25 @@ class NeuralEnvironment():
         if env_mode is None:
             env_mode = self.default_env_mode
 
-        # Update env mode
-        self.set_env_mode(env_mode)
+        auto_decision = None
+        joint_acts_to_use = joint_acts
+        backend_used = env_mode
+        if env_mode == 'auto':
+            if self.auto_controller is None:
+                raise RuntimeError('env_mode="auto" requires an attached auto controller')
+            self.env_mode = 'auto'
+            auto_decision = self.auto_controller.before_step(joint_acts)
+            backend_used = auto_decision.backend_to_apply
+            if auto_decision.action_delta is not None:
+                joint_acts_to_use = joint_acts + auto_decision.action_delta
+            self._apply_backend(backend_used)
+        else:
+            self.set_env_mode(env_mode)
+            backend_used = env_mode
 
         # Assign joint_act to warp
         if self.joint_act_dim > 0:
-            self.env.joint_act.assign(wp.array(joint_acts.view(-1)))
+            self.env.joint_act.assign(wp.array(joint_acts_to_use.view(-1)))
             self.joint_acts.copy_(
                 wp.to_torch(self.env.control.joint_act).view(
                     self.num_envs,
@@ -441,6 +494,9 @@ class NeuralEnvironment():
 
         # Update states
         self._update_states()
+
+        if auto_decision is not None:
+            self.auto_controller.after_step(self.states, backend_used)
 
         return self.states
 
@@ -457,21 +513,25 @@ class NeuralEnvironment():
         else:
             self.env.reset()
             self._update_states()
-        
-        # special reset for neural integrator (e.g. clear states history)            
+
+        # special reset for neural integrator (e.g. clear states history)
         self.integrator_neural.reset()
+        if self.auto_controller is not None:
+            self.auto_controller.reset(self._active_backend, self.states)
 
     def reset_envs(
-        self, 
+        self,
         env_ids: Optional[wp.array] = None
     ):
         """Reset environments where env_ids buffer indicates True."""
         """Resets all envs if env_ids is None."""
         self.env.reset_envs(env_ids)
         self._update_states()
-        # special reset for neural integrator (e.g. clear states history)  
+        # special reset for neural integrator (e.g. clear states history)
         # TODO[Jie]: now reset for all envs together, need to be fixed.
         self.integrator_neural.reset()
+        if self.auto_controller is not None:
+            self.auto_controller.reset(self._active_backend, self.states)
 
     def start_video_export(self, video_export_filename):
         self.export_video = True

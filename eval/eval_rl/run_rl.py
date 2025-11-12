@@ -31,8 +31,9 @@ from rl_games.torch_runner import Runner
 
 from envs.rlgames_env_wrapper import register_env, RLGPUAlgoObserver
 from envs.neural_environment import NeuralEnvironment
-from utils.python_utils import set_random_seed, get_time_stamp  
+from utils.python_utils import set_random_seed, get_time_stamp
 from envs.warp_sim_envs import RenderMode
+from robot_icw_mvp import attach_icw
 
 def get_args():
     parser = argparse.ArgumentParser("")
@@ -51,10 +52,10 @@ def get_args():
     parser.add_argument("--env-mode",
                         default=None,
                         type=str,
-                        choices=["neural", "ground-truth"],
-                        help="Environment mode: in neural the policy is trained "
-                             "or played back in the neural simulation, in ground-truth "
-                             "the Warp simulation is used.")
+                        choices=["neural", "ground-truth", "auto"],
+                        help="Environment mode: 'neural' and 'ground-truth' force a single "
+                             "backend; 'auto' enables the ICW zoom controller to pick the "
+                             "backend on every step.")
     parser.add_argument("--nerd-model-path",
                         default=None,
                         type=str,
@@ -168,8 +169,11 @@ def construct_env(env_specs, device, args):
         args.render = True
         env_specs["warp_env_cfg"]["render_mode"] = RenderMode.USD
         
-    # Load neural model and neural_integrator_cfg if env_mode is "neural"
-    if env_specs['env_mode'] == "neural":
+    # Load neural model and neural_integrator_cfg if env_mode requires it
+    needs_neural_model = env_specs['env_mode'] in ["neural", "auto"]
+    if needs_neural_model:
+        if 'model_path' not in env_specs:
+            raise ValueError(f"env_mode '{env_specs['env_mode']}' requires 'model_path' to be specified in the config")
         neural_model, robot_name = torch.load(env_specs['model_path'], map_location=device)
         neural_model.to(device)
 
@@ -197,6 +201,14 @@ def construct_env(env_specs, device, args):
     if neural_model is not None:
         assert env.robot_name == robot_name, \
             "env.robot_name is not equal to neural_model's robot_name."
+
+    if env_specs['env_mode'] == "auto":
+        icw_cfg = env_specs.get("icw_cfg")
+        icw_cfg_path = env_specs.get("icw_cfg_path")
+        if icw_cfg is None and icw_cfg_path is not None:
+            with open(icw_cfg_path, "r") as cfg_file:
+                icw_cfg = yaml.load(cfg_file, Loader=yaml.SafeLoader)
+        attach_icw(env, icw_cfg)
 
     register_env(
         env,
