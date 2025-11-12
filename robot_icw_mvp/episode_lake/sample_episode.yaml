@@ -1,0 +1,27 @@
+id: 01J1X7F7YVN5XAMQ4WD4E5RZ3M
+robot: cartpole
+context:
+  surface_mu: 0.3
+  payload: baseline
+  note: warmup rollout with auto controller enabled
+signals:
+  rung_dims: [128, 256, 512]
+  rupture_window: [0.04, 0.06, 0.05]
+  step_norm_window: [0.01, 0.02, 0.02]
+  disc: 0.18
+  gen_loss: 0.03
+  extras:
+    icw/backend: 1.0
+    icw/intuition/rupture: 0.06
+    icw/wisdom/disc: 0.18
+    icw/safety/within_limits: 1.0
+decision:
+  backend: neural
+  abstained: false
+  dt_scale: 1.0
+  action_delta_norm: 0.0
+certificates:
+  connectedness: true
+  monotone_up: true
+  compression_robust: true
+  residual_agreement: true

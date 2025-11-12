@@ -67,13 +67,47 @@ python eval_passive_motion.py --env-name PendulumWithContact --model-path ../../
 ```
 
 
+### Auto Mode Quickstart
+`env_mode=auto` enables the ICW (Intuition–Creativity–Wisdom) controller to choose between the analytic and neural backends on every step. A minimal passive-evaluation run looks like:
+
+```
+cd eval/eval_passive
+python eval_passive_motion.py \
+  --env-name Cartpole \
+  --model-path ../../pretrained_models/NeRD_models/Cartpole/model/nn/model.pt \
+  --env-mode auto \
+  --icw-cfg ../../robot_icw_mvp/configs/default_icw.yaml \
+  --num-envs 1 --num-rollouts 5 --rollout-horizon 100
+```
+
+The example above uses the packaged slider preset at `robot_icw_mvp/configs/default_icw.yaml`; you can copy and edit that YAML to create your own presets.
+
+During training or evaluation the NeRD wrappers surface the controller’s telemetry through the existing `extras` dictionary. The key groups are:
+
+- `icw/backend`: 1.0 when the neural backend ran on the current step, 0.0 for the analytic fallback.
+- `icw/intuition/*`: hysteresis signals such as rupture, step norms, abstain thresholds, and dt-scale decisions.
+- `icw/wisdom/*`: continuity diagnostics (Disc, rupture, step norms) plus certificate pass/fail flags.
+- `icw/safety/*` and `icw/creativity/*`: safety-limit reports and branch triggers for the lightweight planner.
+
+For example, the passive evaluator already prints the backend choice; you can also log the extras manually:
+
+```python
+extras = {}
+neural_env.get_extras(extras)
+print(f"backend={extras['icw/backend_label']} (neural_prob={extras['icw/backend']:.1f})")
+```
+
+> [!WARNING]
+> `env_mode=auto` requires a NeRD checkpoint. The passive evaluator and RL harness will raise `ValueError("'auto' env mode requires a neural model. Provide --model-path.")` if `--model-path` is omitted.
+
+
 ### RL Policy Evaluation
 You can test an individual RL policy using the [`run_rl.py`](eval/eval_rl/run_rl.py) script:
 ```
 cd eval/eval_rl
-python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --playback ../../pretrained_models/RL_policies/Anymal/forward_walk/0/nn/AnymalPPO.pth --num-envs 1 --num-games 2 --env-mode [neural|ground-truth] [--render]
+python run_rl.py --rl-cfg ./cfg/Anymal/anymal_forward.yaml --playback ../../pretrained_models/RL_policies/Anymal/forward_walk/0/nn/AnymalPPO.pth --num-envs 1 --num-games 2 --env-mode [neural|analytic] [--render]
 ```
-where `--env-mode` specifies to use NeRD dynamics or ground-truth analytical dynamics.
+where `--env-mode` specifies the backend: `neural` for NeRD dynamics or `analytic` (legacy alias `ground-truth`) for the analytical simulator.
 
 To evaluate a batch of policies with different seeds in both ground-truth dynamics and NeRD dynamics (as done in Table 1 in the paper), you can run the batch evaluation script with the batch evaluation config file:
 ```
